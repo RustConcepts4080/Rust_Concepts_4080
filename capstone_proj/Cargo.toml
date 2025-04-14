@@ -1,0 +1,12 @@
+[package]
+name = "capstone_proj"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+base64 = "0.21"
+aes = "0.8"
+ctr = "0.9"
+rand = "0.8"
+sha2 = "0.10"
+
