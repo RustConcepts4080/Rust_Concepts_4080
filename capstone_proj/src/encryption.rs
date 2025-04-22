@@ -115,3 +115,27 @@ fn derive_chunk_iv(base_iv: &[u8; 16], chunk_index: u32) -> [u8; 16] {
 pub fn generate_base_iv() -> [u8; 16] {
     rand::thread_rng().r#gen()
 }
+
+/// HMAC for File integrity
+use hmac::{Hmac, Mac};
+use hex;
+
+/// Generates an HMAC-SHA256 of the data using the key
+pub fn generate_hmac(data: &[u8], key: &[u8]) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC can take any key size");
+    mac.update(data);
+    let result = mac.finalize().into_bytes();
+    hex::encode(result)
+}
+
+/// Verifies an HMAC-SHA256 hex string against the data and key
+pub fn verify_hmac(expected_hex: &str, data: &[u8], key: &[u8]) -> bool {
+    let expected_bytes = match hex::decode(expected_hex) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC can take any key size");
+    mac.update(data);
+    mac.verify_slice(&expected_bytes).is_ok()
+}
