@@ -1,168 +1,234 @@
 mod encryption;
 
 use std::fs;
-use std::io::{self, Write};
-use base64::{engine::general_purpose, Engine as _};
+use std::path::PathBuf;
+use eframe::{egui, App as EframeApp, Frame, NativeOptions};
+use egui::Context;
+use rfd::FileDialog;
 
-fn prompt_choice(prompt: &str, valid_options: &[&str]) -> String {
-    loop {
-        let input = prompt_input(prompt);
-        if valid_options.contains(&input.as_str()) {
-            return input;
+struct App {
+
+    encrypt_input: Option<PathBuf>,
+    encrypt_output_dir: Option<PathBuf>,
+    encrypt_key: String,
+    encrypt_mode_parallel: bool,
+    encrypt_threads: usize,
+    decrypt_input: Option<PathBuf>,
+    decrypt_output_dir: Option<PathBuf>,
+    decrypt_key: String,
+    decrypt_mode_parallel: bool,
+    decrypt_threads: usize,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            encrypt_input: None,
+            encrypt_output_dir: None,
+            encrypt_key: String::new(),
+            encrypt_mode_parallel: false,
+            encrypt_threads: 1,
+            decrypt_input: None,
+            decrypt_output_dir: None,
+            decrypt_key: String::new(),
+            decrypt_mode_parallel: false,
+            decrypt_threads: 1,
         }
-        println!("Invalid option. Please try again.");
     }
 }
 
-fn prompt_usize(prompt: &str) -> usize {
-    loop {
-        let input = prompt_input(prompt);
-        if let Ok(n) = input.parse::<usize>() {
-            if n > 0 {
-                return n;
-            }
-        }
-        println!("Please enter a valid integer greater than 0.");
+impl EframeApp for App {
+    fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
+        // Top header
+        egui::TopBottomPanel::top("header").show(ctx, |ui| {
+            ui.heading("Rust File Encryptor");
+        });
+
+        // Main area
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                // ── Encrypt section ─────────────────────────────────────
+                ui.group(|ui| {
+                    ui.heading("Encrypt");
+
+                    if ui.button("Select Input File").clicked() {
+                        if let Some(p) = FileDialog::new().pick_file() {
+                            self.encrypt_input = Some(p);
+                        }
+                    }
+                    if let Some(path) = &self.encrypt_input {
+                        ui.label(path.display().to_string());
+                    }
+
+                    if ui.button("Select Output Folder").clicked() {
+                        if let Some(f) = FileDialog::new().pick_folder() {
+                            self.encrypt_output_dir = Some(f);
+                        }
+                    }
+                    if let Some(dir) = &self.encrypt_output_dir {
+                        ui.label(dir.display().to_string());
+                    }
+
+                    ui.label("Key (16 chars):");
+                    ui.text_edit_singleline(&mut self.encrypt_key);
+
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut self.encrypt_mode_parallel, "Parallel");
+                        if self.encrypt_mode_parallel {
+                            ui.add(
+                                egui::DragValue::new(&mut self.encrypt_threads)
+                                    .range(1..=32)
+                                    .prefix("threads: "),
+                            );
+                        }
+                    });
+
+                    if ui.button("Encrypt ▶").clicked() {
+                        if let (Some(in_path), Some(out_dir)) =
+                            (&self.encrypt_input, &self.encrypt_output_dir)
+                        {
+                            if self.encrypt_key.len() == 16 {
+                                let data = fs::read(in_path).expect("read failed");
+                                let ext = in_path
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("");
+                                let iv = encryption::generate_base_iv();
+                                let encrypted = if self.encrypt_mode_parallel {
+                                    encryption::parallel_encrypt(
+                                        &data,
+                                        self.encrypt_key.as_bytes().try_into().unwrap(),
+                                        &iv,
+                                        self.encrypt_threads,
+                                    )
+                                } else {
+                                    encryption::encrypt_series(
+                                        &data,
+                                        self.encrypt_key.as_bytes().try_into().unwrap(),
+                                        &iv,
+                                    )
+                                };
+                                let mut blob = Vec::new();
+                                let ext_bytes = ext.as_bytes();
+                                blob.extend(&(ext_bytes.len() as u32).to_be_bytes());
+                                blob.extend(ext_bytes);
+                                blob.extend(&iv);
+                                blob.extend(encrypted);
+                                let file_stem = in_path
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("output");
+                                let out_file = out_dir.join(format!("{file_stem}_enc.bin"));
+                                fs::write(&out_file, blob).expect("write failed");
+                                println!("Encrypted → {}", out_file.display());
+                            } else {
+                                println!("Key must be 16 characters");
+                            }
+                        } else {
+                            println!("Select input file and output folder first");
+                        }
+                    }
+                }); 
+
+                ui.add_space(20.0);
+
+                // ── Decrypt section ─────────────────────────────────────
+                ui.group(|ui| {
+                    ui.heading("Decrypt");
+
+                    if ui.button("Select Encrypted File").clicked() {
+                        if let Some(p) = FileDialog::new().pick_file() {
+                            self.decrypt_input = Some(p);
+                        }
+                    }
+                    if let Some(path) = &self.decrypt_input {
+                        ui.label(path.display().to_string());
+                    }
+
+                    if ui.button("Select Output Folder").clicked() {
+                        if let Some(f) = FileDialog::new().pick_folder() {
+                            self.decrypt_output_dir = Some(f);
+                        }
+                    }
+                    if let Some(dir) = &self.decrypt_output_dir {
+                        ui.label(dir.display().to_string());
+                    }
+
+                    ui.label("Key (16 chars):");
+                    ui.text_edit_singleline(&mut self.decrypt_key);
+
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut self.decrypt_mode_parallel, "Parallel");
+                        if self.decrypt_mode_parallel {
+                            ui.add(
+                                egui::DragValue::new(&mut self.decrypt_threads)
+                                    .range(1..=32)
+                                    .prefix("threads: "),
+                            );
+                        }
+                    });
+
+                    if ui.button("Decrypt ▶").clicked() {
+                        if let (Some(in_path), Some(out_dir)) =
+                            (&self.decrypt_input, &self.decrypt_output_dir)
+                        {
+                            if self.decrypt_key.len() == 16 {
+                           
+                                let blob = fs::read(in_path).expect("read failed");
+                                let ext_len = u32::from_be_bytes(blob[0..4].try_into().unwrap()) as usize;
+                                let ext = if ext_len > 0 {
+                                    String::from_utf8_lossy(&blob[4..4 + ext_len]).to_string()
+                                } else {
+                                    String::new()
+                                };
+                                let iv_start = 4 + ext_len;
+                                let mut iv = [0u8; 16];
+                                iv.copy_from_slice(&blob[iv_start..iv_start + 16]);
+                                let data = &blob[iv_start + 16..];
+                                let decrypted = if self.decrypt_mode_parallel {
+                                    encryption::parallel_decrypt(
+                                        data,
+                                        self.decrypt_key.as_bytes().try_into().unwrap(),
+                                        &iv,
+                                        self.decrypt_threads,
+                                    )
+                                } else {
+                                    encryption::decrypt_series(
+                                        data,
+                                        self.decrypt_key.as_bytes().try_into().unwrap(),
+                                        &iv,
+                                    )
+                                };
+                                let file_stem = in_path
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("decrypted");
+                                let out_name = if ext.is_empty() {
+                                    format!("{file_stem}_dec.bin")
+                                } else {
+                                    format!("{file_stem}_dec.{ext}")
+                                };
+                                let out_file = out_dir.join(out_name);
+                                fs::write(&out_file, decrypted).expect("write failed");
+                                println!("Decrypted → {}", out_file.display());
+                            } else {
+                                println!("Key must be 16 characters");
+                            }
+                        } else {
+                            println!("Select encrypted file and output folder first");
+                        }
+                    }
+                }); 
+            });   
+        });       
     }
 }
 
-fn prompt_input(prompt: &str) -> String {
-    print!("{}", prompt);
-    io::stdout().flush().unwrap();
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    input.trim().to_string()
-}
-
-
-fn main() -> io::Result<()> {
-    // PROMPTING
-    let action = prompt_choice("Choose operation:\n1) Encrypt\n2) Decrypt\n> ", &["1", "2"]);
-
-    // ENCRYPTION
-    if action == "1" {   
-        let mode = prompt_choice("Choose input type:\n1) String\n2) File path\n> ", &["1", "2"]);
-        let data = match mode.as_str() {
-            "1" => prompt_input("Enter string to encrypt: ").into_bytes(),
-            "2" => {
-                let path = prompt_input("Enter file path: ");
-                match fs::read(&path) {
-                    Ok(data) => data,
-                    Err(_) => {
-                        println!("Failed to read file. Exiting.");
-                        return Ok(());
-                    }
-                }
-            },
-            _ => unreachable!(),
-        };
-    
-        let key: [u8; 16] = loop {
-            let key_input = prompt_input("Enter 16-character encryption key: ");
-            if key_input.len() == 16 {
-                break key_input.as_bytes().try_into().unwrap();
-            } else {
-                println!("Key must be exactly 16 characters long. Please try again.");
-            }
-        };
-    
-        let enc_method = prompt_choice("Choose encryption mode:\n1) Parallel\n2) Series\n> ", &["1", "2"]);
-        let num_threads = if enc_method == "1" {
-            prompt_usize("Enter number of threads to use: ").min(4).max(32)
-        } else {
-            0
-        };
-    
-        let base_iv = encryption::generate_base_iv();
-        let encrypted_data = match enc_method.as_str() {
-            "1" => encryption::parallel_encrypt(&data, &key, &base_iv, num_threads),
-            "2" => encryption::encrypt_series(&data, &key, &base_iv),
-            _ => unreachable!(),
-        };
-    
-        let encoded_iv = general_purpose::STANDARD.encode(&base_iv);
-        println!("\nBase IV (Base64): {}", encoded_iv);
-
-        println!("Encrypted (Base64): {}", general_purpose::STANDARD.encode(&encrypted_data));
-        
-        // HMAC
-        let hmac = encryption::generate_hmac(&data, &key);
-        println!("HMAC (for integrity verification): {}", hmac);
-    }
-    // DECRYPTION
-    else if action == "2" {
-        let mode = prompt_choice("Choose input type:\n1) Base64 string\n2) File path\n> ", &["1", "2"]);
-        let encrypted_data = match mode.as_str() {
-            "1" => {
-                let b64 = prompt_input("Paste Base64 encrypted text: ");
-                match general_purpose::STANDARD.decode(b64) {
-                    Ok(bytes) => bytes,
-                    Err(_) => {
-                        println!("Invalid Base64 input. Exiting.");
-                        return Ok(());
-                    }
-                }
-            },
-            "2" => {
-                let path = prompt_input("Enter file path to encrypted data: ");
-                match fs::read(&path) {
-                    Ok(bytes) => bytes,
-                    Err(_) => {
-                        println!("Failed to read file. Exiting.");
-                        return Ok(());
-                    }
-                }
-            },
-            _ => unreachable!(),
-        };
-    
-        let key: [u8; 16] = loop {
-            let key_input = prompt_input("Enter 16-character decryption key: ");
-            if key_input.len() == 16 {
-                break key_input.as_bytes().try_into().unwrap();
-            } else {
-                println!("Key must be exactly 16 characters long. Please try again.");
-            }
-        };
-    
-        let iv_b64 = prompt_input("Enter Base64-encoded Base IV: ");
-        let decoded_iv = match general_purpose::STANDARD.decode(iv_b64) {
-            Ok(bytes) if bytes.len() == 16 => {
-                let mut base_iv = [0u8; 16];
-                base_iv.copy_from_slice(&bytes);
-                base_iv
-            }
-            _ => {
-                println!("Invalid Base64 IV. Must decode to exactly 16 bytes.");
-                return Ok(());
-            }
-        };
-
-    
-        let dec_method = prompt_choice("Choose decryption mode:\n1) Parallel\n2) Series\n> ", &["1", "2"]);
-        let num_threads = if dec_method == "1" {
-            prompt_usize("Enter number of threads to use: ").min(4).max(32)
-        } else {
-            0
-        };
-    
-        let decrypted_data = match dec_method.as_str() {
-            "1" => encryption::parallel_decrypt(&encrypted_data, &key, &decoded_iv, num_threads),
-            "2" => encryption::decrypt_series(&encrypted_data, &key, &decoded_iv),
-            _ => unreachable!(),
-        };
-    
-        println!("Decrypted text:\n{}", String::from_utf8_lossy(&decrypted_data));
-    
-
-        //HMAC File integrity check
-        let expected_hmac = prompt_input("Enter expected HMAC for integrity check: ");
-        if encryption::verify_hmac(&expected_hmac, &decrypted_data, &key) {
-        println!("Integrity verified!");
-        } else {
-        println!("Integrity check failed. The file may have been tampered with.");
-        }
-    }
-
-    Ok(())
+fn main() -> Result<(), eframe::Error> {
+    let native_options = NativeOptions::default();
+    eframe::run_native(
+        "Rust File Encryptor",
+        native_options,
+        Box::new(|_cc| Ok(Box::new(App::default()))),
+    )
 }
