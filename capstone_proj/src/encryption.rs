@@ -4,6 +4,7 @@ use sha2::{Sha256, Digest};
 use rand::Rng;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use hmac::{Hmac, Mac};
 
 pub type Aes128Ctr = ctr::Ctr128BE<Aes128>;
 
@@ -11,7 +12,6 @@ pub fn encrypt_series(data: &[u8], key: &[u8], base_iv: &[u8; 16]) -> Vec<u8> {
     let iv = derive_chunk_iv(base_iv, 0);
     encrypt_chunk(data, key, &iv)
 }
-
 
 pub fn parallel_encrypt(data: &[u8], key: &[u8], base_iv: &[u8; 16], num_threads: usize) -> Vec<u8> {
     let chunk_size = (data.len() + num_threads - 1) / num_threads;
@@ -116,26 +116,17 @@ pub fn generate_base_iv() -> [u8; 16] {
     rand::thread_rng().r#gen()
 }
 
-/// HMAC for File integrity
-use hmac::{Hmac, Mac};
-use hex;
-
-/// Generates an HMAC-SHA256 of the data using the key
-pub fn generate_hmac(data: &[u8], key: &[u8]) -> String {
-    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC can take any key size");
+pub fn generate_hmac(data: &[u8], key: &[u8]) -> Vec<u8> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key)
+        .expect("HMAC key of any size");
     mac.update(data);
-    let result = mac.finalize().into_bytes();
-    hex::encode(result)
+    mac.finalize().into_bytes().to_vec()
 }
 
-/// Verifies an HMAC-SHA256 hex string against the data and key
-pub fn verify_hmac(expected_hex: &str, data: &[u8], key: &[u8]) -> bool {
-    let expected_bytes = match hex::decode(expected_hex) {
-        Ok(bytes) => bytes,
-        Err(_) => return false,
+pub fn verify_hmac(expected: &[u8], data: &[u8], key: &[u8]) -> bool {
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(key) else {
+        return false;
     };
-
-    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC can take any key size");
     mac.update(data);
-    mac.verify_slice(&expected_bytes).is_ok()
+    mac.verify_slice(expected).is_ok()
 }

@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use eframe::{egui, App as EframeApp, Frame, NativeOptions};
 use egui::Context;
 use rfd::FileDialog;
+use encryption::{generate_hmac, verify_hmac};
 
 struct App {
-
     encrypt_input: Option<PathBuf>,
     encrypt_output_dir: Option<PathBuf>,
     encrypt_key: String,
@@ -113,7 +113,9 @@ impl EframeApp for App {
                                 blob.extend(&(ext_bytes.len() as u32).to_be_bytes());
                                 blob.extend(ext_bytes);
                                 blob.extend(&iv);
-                                blob.extend(encrypted);
+                                blob.extend(&encrypted);
+                                let hmac = generate_hmac(&encrypted, self.encrypt_key.as_bytes());
+                                blob.extend(&hmac);
                                 let file_stem = in_path
                                     .file_stem()
                                     .and_then(|s| s.to_str())
@@ -175,26 +177,55 @@ impl EframeApp for App {
                             if self.decrypt_key.len() == 16 {
                            
                                 let blob = fs::read(in_path).expect("read failed");
+                                if blob.len() < 4 {
+                                    println!("Invalid file! File size too small");
+                                    return;
+                                }
+                                
                                 let ext_len = u32::from_be_bytes(blob[0..4].try_into().unwrap()) as usize;
+                                let iv_start = 4 + ext_len;
+                                let iv_end = iv_start + 16;
+                                
+                                if blob.len() < iv_end + 32 {
+                                    println!("Invalid file! Corrupted or tampered.");
+                                    return;
+                                }
+                                
                                 let ext = if ext_len > 0 {
                                     String::from_utf8_lossy(&blob[4..4 + ext_len]).to_string()
                                 } else {
                                     String::new()
                                 };
-                                let iv_start = 4 + ext_len;
+                                
                                 let mut iv = [0u8; 16];
-                                iv.copy_from_slice(&blob[iv_start..iv_start + 16]);
-                                let data = &blob[iv_start + 16..];
+                                iv.copy_from_slice(&blob[iv_start..iv_end]);
+                                let total = blob.len();
+                                if total < iv_start + 16 + 32 {
+                                    println!("File too small or corrupted.");
+                                    return;
+                                }
+
+                                let encrypted_data_end = total - 32;
+                                let encrypted_data = &blob[iv_start + 16..encrypted_data_end];
+                                let hmac = &blob[encrypted_data_end..];
+
+                                if !verify_hmac(hmac, encrypted_data, self.decrypt_key.as_bytes()) {
+                                    println!("HMAC verification failed! Your file may be corrupted OR the Key is incorrect.");
+                                    return;
+                                } else {
+                                    println!("Yoohoo! HMAC verified. File has not been tampered with.");
+                                }
+
                                 let decrypted = if self.decrypt_mode_parallel {
                                     encryption::parallel_decrypt(
-                                        data,
+                                        encrypted_data,
                                         self.decrypt_key.as_bytes().try_into().unwrap(),
                                         &iv,
                                         self.decrypt_threads,
                                     )
                                 } else {
                                     encryption::decrypt_series(
-                                        data,
+                                        encrypted_data,
                                         self.decrypt_key.as_bytes().try_into().unwrap(),
                                         &iv,
                                     )
