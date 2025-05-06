@@ -4,6 +4,7 @@ use sha2::{Sha256, Digest};
 use rand::Rng;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use hmac::{Hmac, Mac};
 
 pub type Aes128Ctr = ctr::Ctr128BE<Aes128>;
 
@@ -11,7 +12,6 @@ pub fn encrypt_series(data: &[u8], key: &[u8], base_iv: &[u8; 16]) -> Vec<u8> {
     let iv = derive_chunk_iv(base_iv, 0);
     encrypt_chunk(data, key, &iv)
 }
-
 
 pub fn parallel_encrypt(data: &[u8], key: &[u8], base_iv: &[u8; 16], num_threads: usize) -> Vec<u8> {
     let chunk_size = (data.len() + num_threads - 1) / num_threads;
@@ -114,4 +114,19 @@ fn derive_chunk_iv(base_iv: &[u8; 16], chunk_index: u32) -> [u8; 16] {
 /// Generates a secure random 128-bit (16-byte) IV.
 pub fn generate_base_iv() -> [u8; 16] {
     rand::thread_rng().r#gen()
+}
+
+pub fn generate_hmac(data: &[u8], key: &[u8]) -> Vec<u8> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(key)
+        .expect("HMAC key of any size");
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
+}
+
+pub fn verify_hmac(expected: &[u8], data: &[u8], key: &[u8]) -> bool {
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(key) else {
+        return false;
+    };
+    mac.update(data);
+    mac.verify_slice(expected).is_ok()
 }
