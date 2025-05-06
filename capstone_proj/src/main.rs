@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use eframe::{egui, App as EframeApp, Frame, NativeOptions};
 use egui::Context;
 use rfd::FileDialog;
-use sha2::{Sha256, Digest};
+use encryption::{generate_hmac, verify_hmac};
 
 struct App {
     encrypt_input: Option<PathBuf>,
@@ -132,14 +132,13 @@ impl EframeApp for App {
                                 blob.extend(ext_bytes);
                                 blob.extend(&iv);
                                 blob.extend(&encrypted);
-
-                                let mut hasher = Sha256::new();
-                                hasher.update(&encrypted);
-                                let hash = hasher.finalize();
-                                blob.extend(&hash);
-
-                                let file_stem = in_path.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
-                                let out_file = out_dir.join(format!("{file_stem}.crypt"));
+                                let hmac = generate_hmac(&encrypted, self.encrypt_key.as_bytes());
+                                blob.extend(&hmac);
+                                let file_stem = in_path
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or("output");
+                                let out_file = out_dir.join(format!("{file_stem}_enc.bin"));
                                 fs::write(&out_file, blob).expect("write failed");
                                 self.status_message = format!("Encrypted → {}", out_file.display());
                             } else {
@@ -193,27 +192,43 @@ impl EframeApp for App {
                         if let (Some(in_path), Some(out_dir)) = (&self.decrypt_input, &self.decrypt_output_dir) {
                             if self.decrypt_key.len() == 16 {
                                 let blob = fs::read(in_path).expect("read failed");
+                                if blob.len() < 4 {
+                                    println!("Invalid file! File size too small");
+                                    return;
+                                }
+                                
                                 let ext_len = u32::from_be_bytes(blob[0..4].try_into().unwrap()) as usize;
+                                let iv_start = 4 + ext_len;
+                                let iv_end = iv_start + 16;
+                                
+                                if blob.len() < iv_end + 32 {
+                                    println!("Invalid file! Corrupted or tampered.");
+                                    return;
+                                }
+                                
                                 let ext = if ext_len > 0 {
                                     String::from_utf8_lossy(&blob[4..4 + ext_len]).to_string()
                                 } else {
                                     String::new()
                                 };
-                                let iv_start = 4 + ext_len;
+                                
                                 let mut iv = [0u8; 16];
-                                iv.copy_from_slice(&blob[iv_start..iv_start + 16]);
-
-                                let hash_start = blob.len() - 32;
-                                let encrypted_data = &blob[iv_start + 16..hash_start];
-                                let hash = &blob[hash_start..];
-
-                                let mut hasher = Sha256::new();
-                                hasher.update(encrypted_data);
-                                let computed = hasher.finalize();
-
-                                if hash != computed.as_slice() {
-                                    self.status_message = "Integrity check failed!".into();
+                                iv.copy_from_slice(&blob[iv_start..iv_end]);
+                                let total = blob.len();
+                                if total < iv_start + 16 + 32 {
+                                    println!("File too small or corrupted.");
                                     return;
+                                }
+
+                                let encrypted_data_end = total - 32;
+                                let encrypted_data = &blob[iv_start + 16..encrypted_data_end];
+                                let hmac = &blob[encrypted_data_end..];
+
+                                if !verify_hmac(hmac, encrypted_data, self.decrypt_key.as_bytes()) {
+                                    println!("HMAC verification failed! Your file may be corrupted OR the Key is incorrect.");
+                                    return;
+                                } else {
+                                    println!("Yoohoo! HMAC verified. File has not been tampered with.");
                                 }
 
                                 let decrypted = if self.decrypt_mode_parallel {
