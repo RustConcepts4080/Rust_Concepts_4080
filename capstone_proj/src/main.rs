@@ -295,7 +295,7 @@ impl EframeApp for App {
 fn main() -> Result<(), eframe::Error> {
     let native_options = NativeOptions::default();
     eframe::run_native(
-        "Rust File Encryptor",
+        "RustCrypt",
         native_options,
         Box::new(|_cc| Ok(Box::new(App::default()))),
     )
