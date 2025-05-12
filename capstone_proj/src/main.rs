@@ -1,8 +1,10 @@
 mod encryption;
+mod file_shredder;
 use std::fs;
 use std::path::PathBuf;
 use eframe::{egui, App as EframeApp, Frame, NativeOptions};
 use egui::Context;
+use file_shredder::shred_file;
 use rfd::FileDialog;
 use encryption::{generate_hmac, verify_hmac};
 
@@ -342,7 +344,7 @@ impl EframeApp for App {
                             self.success_shred = false;
                             self.failure_shred = false;
                             self.confirm_shred = false;
-                            
+
                             if let Some(p) = FileDialog::new().pick_file() {
                                 self.file_shredder_input = Some(p);
                             }
@@ -357,16 +359,28 @@ impl EframeApp for App {
                             egui::Button::new("Shred File")
                         ).clicked() {
                             self.confirm_shred = true;
+                            self.success_shred = false;
+                            self.failure_shred = false;
                         }
 
                         if self.confirm_shred {
                             ui.label("Are you sure you want to permanently delete this file?");
 
                             if ui.button("Yes").clicked() {
-                                // Delete file
-                                self.file_shredder_input = None;
-                                self.confirm_shred = false;
-                                self.success_shred = true;
+                                if let Some(path) = &self.file_shredder_input {
+                                    match shred_file(path, 3) {
+                                        Ok(()) => {
+                                            self.success_shred = true;
+                                            self.failure_shred = false;
+                                            self.file_shredder_input = None;
+                                        }
+                                        Err(_e) => {
+                                            self.success_shred = false;
+                                            self.failure_shred = true;
+                                        }
+                                    }
+                                    self.confirm_shred = false;
+                                }
                             }
 
                             if ui.button("No").clicked() {
