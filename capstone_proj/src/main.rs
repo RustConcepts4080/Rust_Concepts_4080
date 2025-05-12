@@ -355,12 +355,14 @@ impl EframeApp for App {
 
                         ui.add_space(20.0);
 
-                        if ui.add_enabled(self.file_shredder_input.is_some(),
-                            egui::Button::new("Shred File")
-                        ).clicked() {
-                            self.confirm_shred = true;
-                            self.success_shred = false;
-                            self.failure_shred = false;
+                        if !self.confirm_shred {
+                            if ui.add_enabled(self.file_shredder_input.is_some(),
+                                egui::Button::new("Shred File")
+                            ).clicked() {
+                                self.confirm_shred = true;
+                                self.success_shred = false;
+                                self.failure_shred = false;
+                            }
                         }
 
                         if self.confirm_shred {
