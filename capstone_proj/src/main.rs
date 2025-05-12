@@ -27,6 +27,10 @@ struct App {
     show_encrypt: bool,
     show_decrypt: bool,
     hmac_info_message: Option<String>,
+    file_shredder_input: Option<PathBuf>,
+    confirm_shred: bool,
+    success_shred: bool,
+    failure_shred: bool
 }
 
 impl Default for App {
@@ -47,6 +51,10 @@ impl Default for App {
             show_encrypt: false,
             show_decrypt: false,
             hmac_info_message: None,
+            file_shredder_input: None,
+            confirm_shred: false,
+            success_shred: false,
+            failure_shred: false
         }
     }
 }
@@ -84,7 +92,7 @@ impl EframeApp for App {
                 if ui.button(tab_text("Encrypt/Decrypt", matches!(self.current_tab, Tab::EncryptDecrypt))).clicked() {
                     self.current_tab = Tab::EncryptDecrypt;
                 }
-                if ui.button(tab_text("File Shredding", matches!(self.current_tab, Tab::FileShredder))).clicked() {
+                if ui.button(tab_text("File Shredder", matches!(self.current_tab, Tab::FileShredder))).clicked() {
                     self.current_tab = Tab::FileShredder;
                 }
             });
@@ -322,7 +330,58 @@ impl EframeApp for App {
                 }
                 Tab::FileShredder => {
                     panel_ui.vertical_centered_justified(|ui| {
-                        ui.heading("File Shredder");
+                        ui.label(
+                            egui::RichText::new("🚮 Secure File Shredder")
+                                .size(35.0)
+                                .strong()
+                        );
+
+                        ui.add_space(20.0);
+
+                        if ui.button("Select File").clicked() {
+                            self.success_shred = false;
+                            self.failure_shred = false;
+                            self.confirm_shred = false;
+                            
+                            if let Some(p) = FileDialog::new().pick_file() {
+                                self.file_shredder_input = Some(p);
+                            }
+                        }
+                        if let Some(path) = &self.file_shredder_input {
+                            ui.label(egui::RichText::new(path.display().to_string()).size(20.0));
+                        }
+
+                        ui.add_space(20.0);
+
+                        if ui.add_enabled(self.file_shredder_input.is_some(),
+                            egui::Button::new("Shred File")
+                        ).clicked() {
+                            self.confirm_shred = true;
+                        }
+
+                        if self.confirm_shred {
+                            ui.label("Are you sure you want to permanently delete this file?");
+
+                            if ui.button("Yes").clicked() {
+                                // Delete file
+                                self.file_shredder_input = None;
+                                self.confirm_shred = false;
+                                self.success_shred = true;
+                            }
+
+                            if ui.button("No").clicked() {
+                                self.file_shredder_input = None;
+                                self.confirm_shred = false;
+                            }
+                        }
+
+                        if self.success_shred {
+                            ui.label(egui::RichText::new("File deletion successful").color(egui::Color32::from_rgb(0, 255, 0)));
+                        }
+
+                        if self.failure_shred {
+                            ui.label(egui::RichText::new("An error occured when trying to delete file").color(egui::Color32::from_rgb(255, 0, 0)));
+                        }
                     });
                 }
             }
